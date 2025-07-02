@@ -6,97 +6,81 @@
  * https://github.com/brcontainer/prevent-duplicate-tabs
  */
 
-(function (w, d, u) {
-    "use strict";
+// Ensure browser compatibility
+if (typeof browser === "undefined") {
+    window.browser = chrome;
+} else if (!window.browser) {
+    window.browser = browser;
+}
 
-    let sync = false;
-    const dataChange = { "data": u, "value": u };
-    const dataEvent = new CustomEvent("change:data", { "detail": dataChange });
+// Debug logging
+console.log('Boot.js loading...', { chrome: !!chrome, runtime: !!chrome?.runtime });
 
-    function changeSwitch(e) {
-        if (runtimeConnected()) {
-            sync = true;
-            sendMessage({ "enable": this.checked, "setup": this.id });
-        }
+function empty() {}
+
+// Updated storage functions for Manifest V3
+async function setStorage(key, value) {
+    try {
+        await chrome.storage.local.set({ [key]: value });
+        console.log('Storage set:', key, value);
+    } catch (error) {
+        console.error('Error setting storage:', error);
     }
+}
 
-    function changeRadio(e) {
-        if (runtimeConnected()) {
-            sync = true;
-            sendMessage({ "data": this.name, "value": this.value });
-            triggerEvent(this.name, this.value);
-        }
+async function getStorage(key, fallback) {
+    try {
+        const result = await chrome.storage.local.get([key]);
+        const value = result[key] !== undefined ? result[key] : fallback;
+        console.log('Storage get:', key, '=', value);
+        return value;
+    } catch (error) {
+        console.error('Error getting storage:', error);
+        return fallback;
     }
+}
 
-    function updateRadio(id, value, response, trigger) {
-        const els = d.querySelectorAll("input[type=radio][name='" + id + "']");
+// Legacy synchronous wrapper - converts old localStorage format
+function setStorageSync(key, value) {
+    console.warn('setStorageSync called - converting to async');
+    setStorage(key, value);
+}
 
-        for (let i = els.length - 1; i >= 0; i--) {
-            const current = els[i];
-            current.disabled = false;
+function getStorageSync(key, fallback) {
+    console.warn('getStorageSync called - returning fallback immediately');
+    return fallback;
+}
 
-            if (current.value === value) current.checked = true;
-        }
+function runtimeConnected() {
+    const connected = !!chrome && chrome.runtime && chrome.runtime.sendMessage;
+    console.log('Runtime connected:', connected);
+    return connected;
+}
+
+function sendMessage(message, callback) {
+    console.log('Sending message:', message);
+    
+    if (runtimeConnected()) {
+        chrome.runtime.sendMessage(message).then(response => {
+            console.log('Message response:', response);
+            if (callback) callback(response);
+        }).catch(error => {
+            console.error('Message sending error:', error);
+            if (callback) callback(null);
+        });
+    } else {
+        console.error('Runtime not connected for message:', message);
+        if (callback) callback(null);
     }
+}
 
-    let timeoutEvent = 0;
+// Make functions globally available
+window.empty = empty;
+window.setStorage = setStorage;
+window.getStorage = getStorage;
+window.setStorageSync = setStorageSync;
+window.getStorageSync = getStorageSync;
+window.runtimeConnected = runtimeConnected;
+window.sendMessage = sendMessage;
 
-    function triggerEvent(data, value) {
-        clearTimeout(timeoutEvent);
-
-        timeoutEvent = setTimeout(function () {
-            dataChange.data = data;
-            dataChange.value = value;
-            d.dispatchEvent(dataEvent);
-        }, 100);
-    }
-
-    // Load configurations
-    sendMessage({ "configs": true }, function (response) {
-        if (response) {
-            const toggles = d.querySelectorAll(".toggle input[type=checkbox]");
-
-            for (let i = toggles.length - 1; i >= 0; i--) {
-                const current = toggles[i];
-                current.checked = !!response[current.id];
-                current.disabled = false;
-            }
-        }
-    });
-
-    // Load extra data (themes, etc.)
-    sendMessage({ "extra": true }, function (response) {
-        if (response) {
-            for (let i = response.length - 1; i >= 0; i--) {
-                updateRadio(response[i].id, response[i].value, response[i], false);
-            }
-        }
-    });
-
-    // Listen for runtime messages
-    chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-        if (!sync) {
-            if (request.setup) {
-                const element = d.getElementById(request.setup);
-                if (element) element.checked = request.enable;
-            } else if (request.data) {
-                updateRadio(request.data, request.value, request, true);
-                triggerEvent(request.data, request.value);
-            }
-        }
-
-        sync = false;
-    });
-
-    // Add event listeners to toggles
-    const toggles = d.querySelectorAll(".toggle input[type=checkbox]");
-    for (let i = toggles.length - 1; i >= 0; i--) {
-        toggles[i].addEventListener("change", changeSwitch);
-    }
-
-    // Add event listeners to radio buttons
-    const radios = d.querySelectorAll(".radio input[type=radio]");
-    for (let i = radios.length - 1; i >= 0; i--) {
-        radios[i].addEventListener("change", changeRadio);
-    }
-})(window, document);
+console.log('Boot.js loaded successfully - functions available globally');
