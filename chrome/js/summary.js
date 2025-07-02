@@ -15,18 +15,30 @@
         });
     }
 
-    var details = d.querySelectorAll("details");
+    async function initSummaryStates() {
+        const details = d.querySelectorAll("details");
 
-    for (var i = details.length - 1; i >= 0; i--) {
-        var widget = details[i],
-            summary = widget.querySelector("[data-i18n]"),
-            key = "details:" + summary.getAttribute("data-i18n"),
-            stored = getStorage(key);
+        for (let i = details.length - 1; i >= 0; i--) {
+            const widget = details[i];
+            const summary = widget.querySelector("[data-i18n]");
+            
+            if (summary) {
+                const key = "details:" + summary.getAttribute("data-i18n");
+                const stored = await getStorage(key);
 
-        if (typeof stored === "boolean") {
-            widget.open = stored;
+                if (typeof stored === "boolean") {
+                    widget.open = stored;
+                }
+
+                setEvent(widget, key);
+            }
         }
+    }
 
-        setEvent(widget, key);
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSummaryStates);
+    } else {
+        initSummaryStates();
     }
 })(window, document);

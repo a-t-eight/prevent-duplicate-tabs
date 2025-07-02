@@ -7,40 +7,49 @@
  */
 
 function setColorScheme(darkPrefer, userPrefer) {
-    var disable, links = document.querySelectorAll("link[href*='-dark.css']");
+    let disable;
+    const links = document.querySelectorAll("link[href*='-dark.css']");
 
-    switch (userPrefer || getStorage("data:color-scheme")) {
+    switch (userPrefer) {
         case "dark":
             disable = false;
             break;
         case "light":
             disable = true;
             break;
+        case "default":
         default:
             disable = !darkPrefer;
     }
 
-    for (var i = links.length - 1; i >= 0; i--) {
+    for (let i = links.length - 1; i >= 0; i--) {
         links[i].rel = disable ? "preload" : "stylesheet";
     }
 }
 
 (function () {
-    var media = window.matchMedia("(prefers-color-scheme: dark)");
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
 
-    if (!getStorage("data:color-scheme")) {
-        setStorage("data:color-scheme", "default");
+    // Initialize with default scheme
+    async function initColorScheme() {
+        const currentScheme = await getStorage("data:color-scheme", "default");
+        setColorScheme(media.matches, currentScheme);
     }
 
-    setColorScheme(media.matches);
-
+    // Listen for data changes
     document.addEventListener("change:data", function (e) {
         if (e.detail.data === "color-scheme") {
             setTimeout(setColorScheme, 100, media.matches, e.detail.value);
         }
     });
 
+    // Listen for system theme changes
     media.onchange = function (e) {
-        setColorScheme(e.matches);
+        getStorage("data:color-scheme", "default").then(userPrefer => {
+            setColorScheme(e.matches, userPrefer);
+        });
     };
+
+    // Initialize
+    initColorScheme();
 })();

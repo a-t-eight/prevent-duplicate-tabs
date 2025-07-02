@@ -6,22 +6,16 @@
  * https://github.com/brcontainer/prevent-duplicate-tabs
  */
 
-(function (w, u) {
+// Service Worker for Manifest V3
+(function () {
     "use strict";
 
-    if (typeof browser === "undefined") {
-        w.browser = chrome;
-    } else if (!w.browser) {
-        w.browser = browser;
-    }
-
-    var ignoreds,
+    let ignoreds,
         timeout,
         isHttpRE = /^https?:\/\/\w/i,
         isNewTabRE = /^(about:blank|chrome:\/+?(newtab|startpageshared)\/?)$/i,
         removeHashRE = /#[\s\S]+?$/,
         removeQueryRE = /\?[\s\S]+?$/,
-        browser = w.browser,
         configs = {
             "turnoff": false,
             "old": true,
@@ -40,18 +34,53 @@
             "containers": true
         };
 
+    const legacyConfigs = Object.keys(configs);
 
-    var legacyConfigs = Object.keys(configs);
+    // Storage utilities for service worker
+    async function setStorage(key, value) {
+        try {
+            await chrome.storage.local.set({ [key]: value });
+        } catch (error) {
+            console.error('Error setting storage:', error);
+        }
+    }
+
+    async function getStorage(key, fallback) {
+        try {
+            const result = await chrome.storage.local.get([key]);
+            return result[key] !== undefined ? result[key] : fallback;
+        } catch (error) {
+            console.error('Error getting storage:', error);
+            return fallback;
+        }
+    }
+
+    // Initialize configurations
+    async function initConfigs() {
+        const firstRun = await getStorage("firstrun");
+        
+        if (!firstRun) {
+            // Set default configs
+            for (const config in configs) {
+                await setStorage(config, configs[config]);
+            }
+            await setStorage("firstrun", true);
+        } else {
+            // Load existing configs
+            configs = await getConfigs();
+        }
+        
+        await getIgnored();
+    }
 
     function checkTabs(type) {
         if (configs[type]) {
-            browser.tabs.query(configs.windows ? { "lastFocusedWindow": true } : {}, preGetTabs);
+            chrome.tabs.query(configs.windows ? { "lastFocusedWindow": true } : {}, preGetTabs);
         }
     }
 
     function preGetTabs(tabs) {
         if (timeout) clearTimeout(timeout);
-
         timeout = setTimeout(getTabs, 50, tabs);
     }
 
@@ -73,19 +102,17 @@
     function getTabs(tabs) {
         if (isDisabled()) return;
 
-        var tab,
-            url,
-            groupTabs = {},
-            onlyHttp = configs.http,
-            ignoreHash = !configs.hash,
-            ignoreQuery = !configs.query,
-            ignoreIncognitos = !configs.incognito,
-            diffWindows = configs.windows,
-            diffContainers = configs.containers;
+        const groupTabs = {},
+              onlyHttp = configs.http,
+              ignoreHash = !configs.hash,
+              ignoreQuery = !configs.query,
+              ignoreIncognitos = !configs.incognito,
+              diffWindows = configs.windows,
+              diffContainers = configs.containers;
 
-        for (var i = tabs.length - 1; i >= 0; i--) {
-            tab = tabs[i];
-            url = tab.url;
+        for (let i = tabs.length - 1; i >= 0; i--) {
+            const tab = tabs[i];
+            let url = tab.url;
 
             if (
                 tab.pinned ||
@@ -99,10 +126,9 @@
             }
 
             if (ignoreHash) url = url.replace(removeHashRE, "");
-
             if (ignoreQuery) url = url.replace(removeQueryRE, "");
 
-            var prefix;
+            let prefix;
 
             if (tab.incognito) {
                 prefix = "incognito";
@@ -119,34 +145,29 @@
             }
 
             if (!groupTabs[url]) groupTabs[url] = [];
-
             groupTabs[url].push({ "id": tab.id, "actived": tab.active });
         }
 
-        for (var url in groupTabs) {
+        for (const url in groupTabs) {
             closeTabs(groupTabs[url]);
         }
-
-        groupTabs = tabs = null;
     }
 
     function sortTabs(tab, nextTab) {
         if (configs.active && (tab.actived || nextTab.actived)) {
             return tab.actived ? -1 : 1;
         }
-
         return configs.old && tab.id < nextTab.id ? 1 : -1;
     }
 
     function closeTabs(tabs) {
-        var j = tabs.length;
-
+        const j = tabs.length;
         if (j < 2) return;
 
         tabs = tabs.sort(sortTabs);
 
-        for (var i = 1; i < j; i++) {
-            browser.tabs.remove(tabs[i].id, empty);
+        for (let i = 1; i < j; i++) {
+            chrome.tabs.remove(tabs[i].id).catch(() => {});
         }
     }
 
@@ -157,35 +178,25 @@
         };
     }
 
-    function getConfigs() {
-        return {
-            "turnoff": getStorage("turnoff", configs.turnoff),
-            "old": getStorage("old", configs.old),
-            "active": getStorage("active", configs.active),
-            "start": getStorage("start", configs.start),
-            "replace": getStorage("replace", configs.replace),
-            "update": getStorage("update", configs.update),
-            "create": getStorage("create", configs.create),
-            "attach": getStorage("attach", configs.attach),
-            "datachange": getStorage("datachange", configs.datachange),
-            "http": getStorage("http", configs.http),
-            "query": getStorage("query", configs.query),
-            "hash": getStorage("hash", configs.hash),
-            "incognito": getStorage("incognito", configs.incognito),
-            "windows": getStorage("windows", configs.windows),
-            "containers": getStorage("containers", configs.containers)
-        };
+    async function getConfigs() {
+        const result = {};
+        
+        for (const key of legacyConfigs) {
+            result[key] = await getStorage(key, configs[key]);
+        }
+        
+        return result;
     }
 
-    function getExtraData()
-    {
-        var data = [];
+    async function getExtraData() {
+        const result = await chrome.storage.local.get();
+        const data = [];
 
-        for (var key in localStorage) {
-            if (key.indexOf("data:") === 0) {
+        for (const key in result) {
+            if (key.startsWith("data:")) {
                 data.push({
                     "id": key.substr(5),
-                    "value": getStorage(key)
+                    "value": result[key]
                 });
             }
         }
@@ -193,24 +204,26 @@
         return data;
     }
 
-    function getIgnored() {
-        var hosts = getStorage("hosts"),
-            urls = getStorage("urls");
+    async function getIgnored() {
+        const hosts = await getStorage("hosts", []);
+        const urls = await getStorage("urls", []);
 
-        return ignoreds = {
+        ignoreds = {
             "urls": Array.isArray(urls) ? urls : [],
             "hosts": Array.isArray(hosts) ? hosts : []
         };
+        
+        return ignoreds;
     }
 
-    function toggleIgnoreData(type, ignore, value) {
-        var changed = true,
-            storage = type + "s",
-            contents = getStorage(storage);
+    async function toggleIgnoreData(type, ignore, value) {
+        const storage = type + "s";
+        let contents = await getStorage(storage, []);
 
         if (!Array.isArray(contents)) contents = [];
 
-        var index = contents.indexOf(value);
+        const index = contents.indexOf(value);
+        let changed = true;
 
         if (ignore && index === -1) {
             contents.push(value);
@@ -221,23 +234,21 @@
         }
 
         if (changed) {
-            setStorage(storage, contents);
+            await setStorage(storage, contents);
             ignoreds[storage] = contents;
         }
-
-        contents = null;
     }
 
     function toggleIgnoreIcon(tab, url) {
         if (!url) {
-            browser.tabs.get(tab, function (tab) {
-                if (tab) {
-                    var url = tab.url || tab.pendingUrl;
-                    setTimeout(toggleIgnoreIcon, url ? 0 : 500, tab.id, url);
+            chrome.tabs.get(tab).then(tabInfo => {
+                if (tabInfo) {
+                    const tabUrl = tabInfo.url || tabInfo.pendingUrl;
+                    setTimeout(toggleIgnoreIcon, tabUrl ? 0 : 500, tabInfo.id, tabUrl);
                 }
-            });
+            }).catch(() => {});
         } else {
-            var icon;
+            let icon;
 
             if (isDisabled() || isIgnored(url)) {
                 icon = "/images/disabled.png";
@@ -245,10 +256,10 @@
                 icon = "/images/icon.png";
             }
 
-            browser.browserAction.setIcon({
+            chrome.action.setIcon({
                 "tabId": tab,
                 "path": icon
-            });
+            }).catch(() => {});
         }
     }
 
@@ -256,72 +267,71 @@
         if (tabs && tabs[0]) toggleIgnoreIcon(tabs[0].id, tabs[0].url);
     }
 
-    if (!getStorage("firstrun")) {
-        for (var config in configs) {
-            setStorage(config, configs[config]);
-        }
+    // Event listeners
+    chrome.runtime.onStartup.addListener(() => {
+        initConfigs().then(() => {
+            setTimeout(checkTabs, 100, "start");
+        });
+    });
 
-        setStorage("firstrun", true);
-    } else {
-        configs = getConfigs();
-    }
+    chrome.runtime.onInstalled.addListener(() => {
+        initConfigs().then(() => {
+            setTimeout(checkTabs, 100, "start");
+        });
+    });
 
-    setTimeout(checkTabs, 100, "start");
-    setTimeout(getIgnored, 200);
+    chrome.tabs.onAttached.addListener(createEvent("attach", 500));
+    chrome.tabs.onCreated.addListener(createEvent("create", 10));
+    chrome.tabs.onReplaced.addListener(createEvent("replace", 10));
+    chrome.tabs.onUpdated.addListener(createEvent("update", 10));
 
-    browser.tabs.onAttached.addListener(createEvent("attach", 500));
-    browser.tabs.onCreated.addListener(createEvent("create", 10));
-    browser.tabs.onReplaced.addListener(createEvent("replace", 10));
-    browser.tabs.onUpdated.addListener(createEvent("update", 10));
-
-    browser.tabs.onActivated.addListener(function (tab) {
+    chrome.tabs.onActivated.addListener(function (tab) {
         toggleIgnoreIcon(tab.tabId);
     });
 
-    browser.runtime.onMessage.addListener(function (request, sender, sendResponse) {
-        if (request.ignore !== u) {
-            toggleIgnoreData(request.type, request.ignore, request.value);
-            toggleIgnoreIcon(request.tabId, request.url);
-        } else if (request.setup) {
-            configs[request.setup] = request.enable;
-            setStorage(request.setup, request.enable);
-            browser.tabs.query({ "active": true, "lastFocusedWindow": true }, updateCurrentIcon);
-        } else if (request.data) {
-            var key = "data:" + request.data;
-            configs[key] = request.value;
-            setStorage(key, request.value);
-        } else if (request.extra) {
-            sendResponse(getExtraData());
-        } else if (request.configs) {
-            sendResponse(getConfigs());
-        } else if (request.ignored) {
-            sendResponse(getIgnored());
-        }
+    // Message handler
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        (async () => {
+            try {
+                if (request.ignore !== undefined) {
+                    await toggleIgnoreData(request.type, request.ignore, request.value);
+                    toggleIgnoreIcon(request.tabId, request.url);
+                } else if (request.setup) {
+                    configs[request.setup] = request.enable;
+                    await setStorage(request.setup, request.enable);
+                    const tabs = await chrome.tabs.query({ "active": true, "lastFocusedWindow": true });
+                    updateCurrentIcon(tabs);
+                } else if (request.data) {
+                    const key = "data:" + request.data;
+                    await setStorage(key, request.value);
+                } else if (request.extra) {
+                    const extraData = await getExtraData();
+                    sendResponse(extraData);
+                    return;
+                } else if (request.configs) {
+                    const currentConfigs = await getConfigs();
+                    sendResponse(currentConfigs);
+                    return;
+                } else if (request.ignored) {
+                    const ignoredData = await getIgnored();
+                    sendResponse(ignoredData);
+                    return;
+                }
 
-        if (request.setup || request.ignore !== u) {
-            if (configs.datachange) setTimeout(checkTabs, 10, "datachange");
-        }
+                if (request.setup || request.ignore !== undefined) {
+                    if (configs.datachange) setTimeout(checkTabs, 10, "datachange");
+                }
+                
+                sendResponse({ success: true });
+            } catch (error) {
+                console.error('Message handler error:', error);
+                sendResponse({ error: error.message });
+            }
+        })();
+        
+        return true; // Keep message channel open for async response
     });
 
-    setTimeout(async function () {
-        var store = {};
-
-        for (var i = 0, j = localStorage.length; i < j; i++) {
-            var key = localStorage.key(i);
-
-            if (key === "urls" || key.indexOf("data:") === 0 || legacyConfigs.includes(key)) {
-                try {
-                    var item = JSON.parse(localStorage.getItem(key));
-
-                    if (key === "urls" && Array.isArray(item.value)) {
-                        store[key] = item.value;
-                    } else if ("value" in item) {
-                        store[key] = item.value;
-                    }
-                } catch (ee) {}
-            }
-        }
-
-        await browser.storage.local.set(store);
-    }, 1000);
-})(window);
+    // Initialize on service worker startup
+    initConfigs();
+})();
