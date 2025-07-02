@@ -9,34 +9,29 @@
 (function (w, d) {
     "use strict";
 
-    if (typeof browser === "undefined") {
-        w.browser = chrome;
-    } else if (!w.browser) {
-        w.browser = browser;
-    }
-
-    var tabId,
-        sync = false,
-        browser = w.browser,
-        isHttpRE = /^https?:\/\/\w/i,
-        variables = {
-            "url": null,
-            "host": null,
-            "version": browser.runtime.getManifest().version
-        };
+    let tabId,
+        sync = false;
+    
+    const isHttpRE = /^https?:\/\/\w/i;
+    const variables = {
+        "url": null,
+        "host": null,
+        "version": chrome.runtime.getManifest().version
+    };
 
     function applyIgnoredData(hosts, urls) {
-        var http = isHttpRE.test(variables.url);
+        const http = isHttpRE.test(variables.url);
 
         if (!http) return;
 
-        var actions = d.getElementById("actions"),
-            ignoreds = d.querySelectorAll("[data-ignored]");
+        const actions = d.getElementById("actions");
+        const ignoreds = d.querySelectorAll("[data-ignored]");
 
         actions.style.display = "block";
 
-        for (var i = ignoreds.length - 1; i >= 0; i--) {
-            var el = ignoreds[i], data = el.dataset.ignored;
+        for (let i = ignoreds.length - 1; i >= 0; i--) {
+            const el = ignoreds[i];
+            const data = el.dataset.ignored;
 
             if (data.indexOf("urls[") === 0) {
                 if (urls.indexOf(variables.url) !== -1) el.classList.toggle("data-ignored", true);
@@ -53,21 +48,21 @@
     }
 
     function applyEvents() {
-        var els = d.querySelectorAll("[data-ignored] .col:first-child > button");
+        const els = d.querySelectorAll("[data-ignored] .col:first-child > button");
 
-        for (var i = els.length - 1; i >= 0; i--) {
+        for (let i = els.length - 1; i >= 0; i--) {
             els[i].addEventListener("click", addRemoveUrl);
         }
     }
 
     function addRemoveUrl(e) {
-        var target = e.target;
+        const target = e.target;
 
-        if (target && w.runtimeConnected()) {
+        if (target && runtimeConnected()) {
             sync = true;
 
-            var type = target.dataset.type,
-                ignore = !target.closest("[data-ignored]").classList.contains("data-ignored");
+            const type = target.dataset.type;
+            const ignore = !target.closest("[data-ignored]").classList.contains("data-ignored");
 
             sendMessage({
                 "type": type,
@@ -82,13 +77,14 @@
     }
 
     function toggleIgnore(type, ignore) {
-        d.querySelector("[data-type='" + type + "']")
-            .closest("[data-ignored]").classList
-                .toggle("data-ignored", ignore);
+        const element = d.querySelector("[data-type='" + type + "']");
+        if (element) {
+            element.closest("[data-ignored]").classList.toggle("data-ignored", ignore);
+        }
     }
 
     function applyIgnoredVars(vars) {
-        var query;
+        let query;
 
         if (vars) {
             query = "var[name='" + vars.join("'], var[name='") + "']";
@@ -96,10 +92,12 @@
             query = "var[name]";
         }
 
-        var vars = d.querySelectorAll(query);
+        const varElements = d.querySelectorAll(query);
 
-        for (var i = vars.length - 1; i >= 0; i--) {
-            var el = vars[i], key = el.getAttribute("name"), value = variables[key];
+        for (let i = varElements.length - 1; i >= 0; i--) {
+            const el = varElements[i];
+            const key = el.getAttribute("name");
+            const value = variables[key];
 
             if (key && value) {
                 el.textContent = value;
@@ -110,37 +108,44 @@
 
     function containerConfigs(tab) {
         if (tab.cookieStoreId) {
-            var configs = d.querySelectorAll(".support-containers");
+            const configs = d.querySelectorAll(".support-containers");
 
-            for (var i = configs.length - 1; i >= 0; i--) {
+            for (let i = configs.length - 1; i >= 0; i--) {
                 configs[i].classList.toggle("supported-containers", true);
             }
         }
     }
 
+    // Initialize data
     sendMessage({ "ignored": true }, function (response) {
         if (response) {
-            browser.tabs.query({ active: true, lastFocusedWindow: true }, function (tabs) {
+            chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(tabs => {
                 if (tabs[0]) {
                     tabId = tabs[0].id;
-
                     variables.url = tabs[0].url;
-                    variables.host = new URL(variables.url).host;
+                    
+                    try {
+                        variables.host = new URL(variables.url).host;
+                    } catch (error) {
+                        variables.host = variables.url;
+                    }
 
                     applyIgnoredVars(["url", "host"]);
-                    applyIgnoredData(response.hosts, response.urls);
-
+                    applyIgnoredData(response.hosts || [], response.urls || []);
                     containerConfigs(tabs[0]);
                 }
+            }).catch(error => {
+                console.error('Error querying tabs:', error);
             });
         }
     });
 
-    browser.runtime.onMessage.addListener(function (request, sender, sendResponse) {
+    // Listen for runtime messages
+    chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
         if (!sync && request.type) toggleIgnore(request.type, request.ignore);
-
         sync = false;
     });
 
+    // Apply variables initially
     applyIgnoredVars();
 })(window, document);
